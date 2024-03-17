@@ -1,6 +1,9 @@
 from treelib import Tree
 from closure import TreeBaseClass, _Node, _Links
 from sqlalchemy.orm.query import Query
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
+
 # from sqlalchemy.inspection import inspect
 
 class NodeTypeError(Exception):
@@ -32,9 +35,10 @@ def sort_query(query: Query):
         
 class _BaseTree(Tree):
     
-    def __init__(self, query: list[(_Node, _Links)], identifier:str, session):
+    def __init__(self, query: list[(_Node, _Links)], identifier:str, session:Session, commit='always'):
         
         self._session = session
+        self.__commit = commit
         
         Tree.__init__(self, identifier = identifier)    
         
@@ -42,6 +46,25 @@ class _BaseTree(Tree):
         
         for node in sorted_query:
             super().create_node(tag = node[0].tag, identifier = node[0].id, parent=node[1].parent_id, data = node[0])
+    
+    def __del__(self):
+        if self.__commit == 'ondelete':
+            self._session.commit()
+            
+            
+    def __commit_IF(self):
+        if self.__commit == 'always':
+            self.save2file()        
+            
+    def _clone(self, identifier=None, with_tree=False, deep=False):
+        return Tree(identifier=f'cloned_{self.identifier}')
+    
+    def save2file(self):
+        try:
+            self._session.commit()
+        except:
+            self._session.rollback()
+            raise
     
     def create_node(self, parent: _Node | None, data: _Node):
         
@@ -58,14 +81,9 @@ class _BaseTree(Tree):
         self._session.add(data)        
         self._session.add(link)
 
-        try:
-            self._session.commit()
-        except:
-            self._session.rollback()
-            raise
-        
+        self.__commit_IF()
+                
         return super_return
-    
     
     def add_node(self, parent: _Node | None, data):
         # checar se data.data nao está null
@@ -76,8 +94,48 @@ class _BaseTree(Tree):
     # def remove_node(self, node: _Node):
         # pass
     
-    # def remove_subtree(self, nid, identifier=None):
-        # pass
+    def remove_subtree(self, nid, identifier=None):
+        
+        remove_tree = super().remove_subtree(nid, identifier)
+
+        removed_list = list(remove_tree.expand_tree())
+        
+        query = self._session.query(_Links)      \
+            .filter(_Links.child_id == nid)
+            # .filter(_Node.id.in_(removed_list))
+
+        count = query.count()
+        if count != 1:
+            raise Exception(f'New subtree root node should be unique, but {count} was found')
+
+        for node in query.all():
+            node.parent_id = None
+            # self._session.delete(node[0])
+            # self._session.delete(node[1])
+
+        self.__commit_IF()
+                   
+        return SelfDestroyTree(tree = remove_tree, session = self._session)
     
     # def update_node(self, nid, **attrs):
         # pass
+
+class SelfDestroyTree(Tree):
+    
+    def __init__(self, tree, session):
+        Tree.__init__(self, tree=tree)
+        self.__session = session
+    
+    def __del__(self):
+        
+        removeds = []
+        for node in self._nodes.values():
+            removeds.append(node.data.id)
+            self.__session.delete(node.data)
+        
+        query = self.__session.query(_Links) \
+            .filter(_Links.child_id.in_(removeds))
+        
+        query.delete(synchronize_session=False)
+
+        self.__session.commit()

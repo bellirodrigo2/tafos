@@ -35,7 +35,10 @@ class TreeCalculations(unittest.TestCase):
     def tearDown(self):
         _Node.__table__.drop(self.engine)
         _Links.__table__.drop(self.engine)
-
+        # self.session.commit()
+        self.session.close()
+        self.engine.dispose()
+        
     def test_create_root(self):
         print(f"Testing '{inspect.currentframe().f_code.co_name}'")
         
@@ -129,6 +132,37 @@ class TreeCalculations(unittest.TestCase):
         self.assertNotEqual(tree2.root, None, 'The root node is not None.')
         
         nodes2 = node_map(2, 4)
+    
+    def test_remove_subtree(self):
+        print(f"Testing '{inspect.currentframe().f_code.co_name}'")
+        
+        populate_two_level_tree(self.tree)
+        
+        nodes2 = node_map(2, 5)
+        node = self.tree.get_node('01').data
+
+        self.tree.create_node(parent=node, data=nodes2[0])
+        self.tree.create_node(parent=nodes2[0], data=nodes2[1])
+        self.tree.create_node(parent=nodes2[0], data=nodes2[2])
+        self.tree.create_node(parent=nodes2[1], data=nodes2[3])
+        self.tree.create_node(parent=node, data=nodes2[4])
+    
+        # print(self.tree)
+        query, exp_query = self.session.query(_Node, _Links)      \
+            .join(_Links, _Links.child_id == _Node.id), 12
+            
+        self.assertEqual(query.count(),exp_query, 'Query before "remove_subtree()"')
+        
+        st = self.tree.remove_subtree(nid='01')    
+        st_len = len(st)
+        self.assertEqual(st_len, 7, 'Subtree length')
+        st = None
+
+        query2, exp_query2 = self.session.query(_Node, _Links)      \
+            .join(_Links, _Links.child_id == _Node.id), (exp_query - st_len)
+            
+        self.assertEqual(query2.count(),exp_query2, 'Query before "remove_subtree()"')
+
 
 # if __name__ == '__main__':
 #     unittest.main()
