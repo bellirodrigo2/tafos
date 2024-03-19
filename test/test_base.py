@@ -9,6 +9,7 @@ from treelib.exceptions import DuplicatedNodeIdError, MultipleRootError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from treelib import Node
 from base_tree import _Node, _Links, _BaseTree, TreeBaseClass, NodeTypeError, BadFormedTreeError
 from factories import node_map, populate_two_level_tree
 
@@ -52,11 +53,10 @@ class TreeCalculations(unittest.TestCase):
         print(f"Testing '{inspect.currentframe().f_code.co_name}'")
         
         populate_two_level_tree(self.tree)
-        root = self.tree.get_node(self.tree.root).data
-        # suc = self.tree.get_node(self.tree.root).successors(tree_name)
+        root = self.tree.get_node(self.tree.root)
         
         with self.assertRaises(DuplicatedNodeIdError):
-            self.tree.create_node(parent=None, data=root)
+            self.tree.create_node(parent=None, data=root.data)
             
         with self.assertRaises(NodeTypeError):
             self.tree.create_node(parent=root, data='hello world')
@@ -77,6 +77,50 @@ class TreeCalculations(unittest.TestCase):
         with self.assertRaises(BadFormedTreeError):         
             tree2 = _BaseTree(identifier = tree_name, query = query2, session = self.session)
 
+    def test_add_node(self):
+        print(f"Testing '{inspect.currentframe().f_code.co_name}'")
+        
+        populate_two_level_tree(self.tree)
+            
+        node00  = self.tree.get_node('00')
+        
+        nodeSQL = _Node(id='nodeSQL', tag='SQL')
+        nodeSQL2 = _Node(id='nodeSQL2', tag='SQL2')
+        nodeSQL3 = _Node(id='nodeSQL3', tag='SQL3')
+        nodeSQL4 = _Node(id='nodeSQL4', tag='SQL4')
+
+        nodeTree1 = Node(identifier=nodeSQL.id, tag=nodeSQL.tag, data=nodeSQL)
+        nodeTree2 = Node(identifier=nodeSQL2.id, tag=nodeSQL2.tag, data=nodeSQL2)
+        nodeTree3 = Node(identifier=nodeSQL3.id, tag='wrong_tag', data=nodeSQL3)
+        nodeTree4 = Node(identifier='wrong_id', tag=nodeSQL4.tag, data=nodeSQL3)
+
+        self.tree.add_node(parent=node00, node=nodeTree1)
+        self.tree.add_node(parent=node00, node=nodeTree2)
+        
+        with self.assertRaises(Exception):
+            self.tree.add_node(parent=node00, node=nodeTree3)
+        with self.assertRaises(Exception):
+            self.tree.add_node(parent=node00, node=nodeTree4)
+
+    def test_parent_types(self):
+        print(f"Testing '{inspect.currentframe().f_code.co_name}'")
+        
+        populate_two_level_tree(self.tree)
+            
+        node00  = self.tree.get_node('00')
+        
+        nodeSQL = _Node(id='nodeSQL', tag='SQL')
+        nodeSQL2 = _Node(id='nodeSQL2', tag='SQL2')
+        nodeSQL3 = _Node(id='nodeSQL3', tag='SQL3')
+        
+        self.tree.create_node(parent=node00, data=nodeSQL)
+        self.tree.create_node(parent=node00.data, data=nodeSQL2)
+        self.tree.create_node(parent='00', data=nodeSQL3)
+        
+        suc, exp = node00.successors(tree_name), ['10', 'nodeSQL', 'nodeSQL2', 'nodeSQL3']
+        
+        self.assertEqual(suc, exp, 'create_node() called with differente types of parents')
+
     def test_create_two_levels(self):
         print(f"Testing '{inspect.currentframe().f_code.co_name}'")
         
@@ -84,12 +128,12 @@ class TreeCalculations(unittest.TestCase):
             
         node00  = self.tree.get_node('00')
         node11  = self.tree.get_node('11')
+        
         pred, exp_pred = node11.predecessor(tree_name), '01'
         suc, exp_suc = node00.successors(tree_name), ['10']
         sib, exp_sib = self.tree.siblings('00'), 2
         anc, exp_anc = self.tree.ancestor('11'), '01'
         children, exp_child = self.tree.children('00'), 1
-        # print(self.tree)
         
         def gt_10(node):
             try:
@@ -113,6 +157,10 @@ class TreeCalculations(unittest.TestCase):
         self.assertEqual(node11.tag, 'node11', 'get_node("11").tag error.')
         self.assertEqual(self.tree.depth(), 2, 'Tree depth mismatch.')
         self.assertNotEqual(self.tree.root, None, 'The root node is not None.')
+
+        nodeten = self.tree.get_node('10')        
+        newZEROnode = _Node(tag=f'node00', id=f'000')        
+        self.tree.create_node(parent=nodeten.data, data=newZEROnode)
 
     def test_persistance(self):
         print(f"Testing '{inspect.currentframe().f_code.co_name}'")
@@ -153,7 +201,7 @@ class TreeCalculations(unittest.TestCase):
             
         self.assertEqual(query.count(),exp_query, 'Query before "remove_subtree()"')
         
-        st = self.tree.remove_subtree(nid='01')    
+        st = self.tree.remove_subtree(nid='01')
         st_len = len(st)
         self.assertEqual(st_len, 7, 'Subtree length')
         st = None
@@ -162,7 +210,6 @@ class TreeCalculations(unittest.TestCase):
             .join(_Links, _Links.child_id == _Node.id), (exp_query - st_len)
             
         self.assertEqual(query2.count(),exp_query2, 'Query before "remove_subtree()"')
-
 
 # if __name__ == '__main__':
 #     unittest.main()

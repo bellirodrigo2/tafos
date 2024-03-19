@@ -1,4 +1,4 @@
-from treelib import Tree
+from treelib import Tree, Node
 from closure import TreeBaseClass, _Node, _Links
 from sqlalchemy.orm.query import Query
 from sqlalchemy.orm import Session
@@ -43,14 +43,14 @@ class _BaseTree(Tree):
         Tree.__init__(self, identifier = identifier)    
         
         sorted_query = sort_query(query)
-        
+
         for node in sorted_query:
-            super().create_node(tag = node[0].tag, identifier = node[0].id, parent=node[1].parent_id, data = node[0])
+            nodeTree = self.node_class(tag=node[0].tag, identifier=node[0].id, data=node[0])
+            super().add_node(node=nodeTree, parent=node[1].parent_id)
     
     def __del__(self):
         if self.__commit == 'ondelete':
-            self._session.commit()
-            
+            self.save2file()
             
     def __commit_IF(self):
         if self.__commit == 'always':
@@ -58,6 +58,9 @@ class _BaseTree(Tree):
             
     def _clone(self, identifier=None, with_tree=False, deep=False):
         return Tree(identifier=f'cloned_{self.identifier}')
+
+    def __get_parent_id(self, parent):
+        return parent.identifier if isinstance(parent, self.node_class) else parent.id if isinstance(parent, _Node) else parent
     
     def save2file(self):
         try:
@@ -66,62 +69,69 @@ class _BaseTree(Tree):
             self._session.rollback()
             raise
     
-    def create_node(self, parent: _Node | None, data: _Node):
+    def create_node(self, parent: _Node | Node | str | None, data: _Node):
         
         if isinstance(data, _Node) is False:
             raise NodeTypeError(f'BaseTree Error - "data" type is "{type(data)}, and should be "{_Node}""')
-        parent_id = parent if (parent is None) else parent.id
+
+        node = self.node_class(tag=data.tag, identifier=data.id, data=data)
+        self.add_node(node=node, parent=parent)
+        return node
+
+    def add_node(self, node: Node, parent: Node | _Node | str | None):
         
+        if node.identifier != node.data.id:
+            raise Exception(f"Tree node ID is and SQL node ID is different. {node.identifier} x {node.data.id}")
+        if node.tag != node.data.tag:
+            raise Exception(f"Tree node TAG is and SQL node TAG is different. {node.tag} x {node.data.tag}")
+
+        parent_id = self.__get_parent_id(parent)
+
         try:
-            super_return = super().create_node(tag = data.tag, identifier=data.id, parent=parent_id, data=data)
+            super_return = super().add_node(node=node, parent=parent_id)
         except:
             raise
-
-        link = _Links(parent_id=parent_id, child_id=data.id)
-        self._session.add(data)        
+            
+        link = _Links(parent_id=parent_id, child_id=node.data.id)
+        self._session.add(node.data)
         self._session.add(link)
 
         self.__commit_IF()
                 
         return super_return
+            
+    def subtree(self, node: _Node | Node | str | None):
+        pass
     
-    def add_node(self, parent: _Node | None, data):
-        # checar se data.data nao está null
-        # checar se data.identifier eh igual data.data.id
-        #CHECAR SE data.TAG EH IGUAL data.data.tag
-        return super().add_node(parent, data)
+    def paste(self, node: _Node | Node | str | None, tree: Tree):
+        pass
     
-    # def remove_node(self, node: _Node):
-        # pass
+    def update_node(self, nid, **attrs):
+        pass
+    
+    def remove_node(self, node: _Node):
+        pass
     
     def remove_subtree(self, nid, identifier=None):
         
         remove_tree = super().remove_subtree(nid, identifier)
 
-        removed_list = list(remove_tree.expand_tree())
-        
         query = self._session.query(_Links)      \
             .filter(_Links.child_id == nid)
-            # .filter(_Node.id.in_(removed_list))
 
         count = query.count()
         if count != 1:
             raise Exception(f'New subtree root node should be unique, but {count} was found')
 
-        for node in query.all():
-            node.parent_id = None
-            # self._session.delete(node[0])
-            # self._session.delete(node[1])
+        for link in query:
+            link.parent_id = None
 
         self.__commit_IF()
                    
         return SelfDestroyTree(tree = remove_tree, session = self._session)
     
-    # def update_node(self, nid, **attrs):
-        # pass
-
 class SelfDestroyTree(Tree):
-    
+    # FAZER UMA FUNCAO PRA REPASSAR ESSA TREE EM UM NODE PARENT
     def __init__(self, tree, session):
         Tree.__init__(self, tree=tree)
         self.__session = session
