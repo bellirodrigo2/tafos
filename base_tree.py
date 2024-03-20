@@ -22,41 +22,46 @@ def get_children(query, parent, list):
     
     return [row[1].child_id for row in children]
 
-def sort_query(query: Query):
+def sort_query(query: Query)->Query:
     
     rows = []
-    child = get_children(query, None, rows)    
+    child = get_children(query, None, rows)   
+    # FAZER OQUE AQUI SE NAO HOUVER NONE PARENT ???
+    # ACHAR O UNICO NA QUERY QUE O PARENT NAO ESTA NA PROPRIA QUERY ?????
+     
     while len(child) > 0:
         child = get_children(query, child, rows)
     
     if len(query.all()) != len(rows):
         raise BadFormedTreeError('BaseTree Error - Bad formed Query Tree')
     return rows
+    
+def create_tree(query: list[(_Node, _Links)], identifier:str, session:Session, commit='always'):
         
+    sorted_query = sort_query(query)
+
+    tree = Tree(node_class=Node)
+    for node in sorted_query:
+        tree.create_node(tag=node[0].tag, identifier=node[0].id, parent = node[1].parent_id, data=node[0])
+    return _BaseTree(session=session, commit=commit, tree=tree, node_class=tree.node_class, identifier=identifier)
+
 class _BaseTree(Tree):
     
-    def __init__(self, query: list[(_Node, _Links)], identifier:str, session:Session, commit='always'):
-        
+    def __init__(self, session:Session, commit:str, tree=None, node_class=None, identifier=None):
         self._session = session
-        self.__commit = commit
+        self._commit = commit
         
-        Tree.__init__(self, identifier = identifier)    
-        
-        sorted_query = sort_query(query)
-
-        for node in sorted_query:
-            nodeTree = self.node_class(tag=node[0].tag, identifier=node[0].id, data=node[0])
-            super().add_node(node=nodeTree, parent=node[1].parent_id)
+        Tree.__init__(self, tree=tree, node_class=node_class, identifier=identifier)   
     
     def __del__(self):
-        if self.__commit == 'ondelete':
+        if self._commit == 'ondelete':
             self.save2file()
             
-    def __commit_IF(self):
-        if self.__commit == 'always':
+    def _commit_IF(self):
+        if self._commit == 'always':
             self.save2file()        
             
-    def _clone(self, identifier=None, with_tree=False, deep=False):
+    def _clone(self, identifier=None, with_tree=False):
         return Tree(identifier=f'cloned_{self.identifier}')
 
     def __get_parent_id(self, parent):
@@ -96,11 +101,11 @@ class _BaseTree(Tree):
         self._session.add(node.data)
         self._session.add(link)
 
-        self.__commit_IF()
+        self._commit_IF()
                 
         return super_return
             
-    def subtree(self, node: _Node | Node | str | None):
+    def merge(self, nid, new_tree):
         pass
     
     def paste(self, node: _Node | Node | str | None, tree: Tree):
@@ -110,6 +115,7 @@ class _BaseTree(Tree):
         pass
     
     def remove_node(self, node: _Node):
+        # chamar o remove_subtree e deixar a SelfDestroyTree morrer
         pass
     
     def remove_subtree(self, nid, identifier=None):
@@ -123,29 +129,36 @@ class _BaseTree(Tree):
         if count != 1:
             raise Exception(f'New subtree root node should be unique, but {count} was found')
 
-        for link in query:
-            link.parent_id = None
+        query[0].parent_id = None
 
-        self.__commit_IF()
+        self._commit_IF()
                    
-        return SelfDestroyTree(tree = remove_tree, session = self._session)
-    
-class SelfDestroyTree(Tree):
-    # FAZER UMA FUNCAO PRA REPASSAR ESSA TREE EM UM NODE PARENT
-    def __init__(self, tree, session):
-        Tree.__init__(self, tree=tree)
-        self.__session = session
-    
-    def __del__(self):
+        return SelfDestroyTree(tree = remove_tree, session = self._session, commit = self._commit, \
+            identifier=self.identifier, node_class=self.node_class)
         
+class SelfDestroyTree(_BaseTree):
+
+    def __init__(self, tree, session, commit, node_class, identifier):
+        _BaseTree.__init__(self, tree=tree, session=session, commit=commit, \
+            node_class=node_class, identifier=identifier)
+
+    def transfer_tree(self) ->Tree:
+        tree = _BaseTree(session = self._session, tree=self, node_class=self.node_class, commit=self._commit)
+        self._nodes = {}
+        return tree
+            
+    def _clean_table(self):
         removeds = []
         for node in self._nodes.values():
             removeds.append(node.data.id)
-            self.__session.delete(node.data)
+            self._session.delete(node.data)
         
-        query = self.__session.query(_Links) \
+        query = self._session.query(_Links) \
             .filter(_Links.child_id.in_(removeds))
         
         query.delete(synchronize_session=False)
 
-        self.__session.commit()
+        self._session.commit()
+    
+    def __del__(self):
+        self._clean_table()

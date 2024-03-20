@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from treelib import Node
-from base_tree import _Node, _Links, _BaseTree, TreeBaseClass, NodeTypeError, BadFormedTreeError
+from base_tree import _Node, _Links, create_tree, TreeBaseClass, NodeTypeError, BadFormedTreeError
 from factories import node_map, populate_two_level_tree
 
 file = 'test_base.db'
@@ -28,10 +28,10 @@ class TreeCalculations(unittest.TestCase):
         Session = sessionmaker(bind=self.engine)
         self.session = Session()
 
-        self.query = self.session.query(_Node, _Links)       \
+        self.query = self.session.query(_Node, _Links) \
             .join(_Links, _Links.child_id == _Node.id)
 
-        self.tree = _BaseTree(identifier = tree_name, query = self.query, session = self.session)
+        self.tree = create_tree(identifier = tree_name, query = self.query, session = self.session)
 
     def tearDown(self):
         _Node.__table__.drop(self.engine)
@@ -75,7 +75,7 @@ class TreeCalculations(unittest.TestCase):
             .join(_Links, _Links.child_id == _Node.id)
         
         with self.assertRaises(BadFormedTreeError):         
-            tree2 = _BaseTree(identifier = tree_name, query = query2, session = self.session)
+            tree2 = create_tree(identifier = tree_name, query = query2, session = self.session)
 
     def test_add_node(self):
         print(f"Testing '{inspect.currentframe().f_code.co_name}'")
@@ -88,14 +88,17 @@ class TreeCalculations(unittest.TestCase):
         nodeSQL2 = _Node(id='nodeSQL2', tag='SQL2')
         nodeSQL3 = _Node(id='nodeSQL3', tag='SQL3')
         nodeSQL4 = _Node(id='nodeSQL4', tag='SQL4')
+        nodeSQL5 = _Node(id='nodeSQL5', tag='SQL5')
 
         nodeTree1 = Node(identifier=nodeSQL.id, tag=nodeSQL.tag, data=nodeSQL)
         nodeTree2 = Node(identifier=nodeSQL2.id, tag=nodeSQL2.tag, data=nodeSQL2)
         nodeTree3 = Node(identifier=nodeSQL3.id, tag='wrong_tag', data=nodeSQL3)
         nodeTree4 = Node(identifier='wrong_id', tag=nodeSQL4.tag, data=nodeSQL3)
+        nodeTree5 = Node(identifier=nodeSQL5.id, tag=nodeSQL5.tag, data=nodeSQL5)
 
         self.tree.add_node(parent=node00, node=nodeTree1)
-        self.tree.add_node(parent=node00, node=nodeTree2)
+        self.tree.add_node(parent=node00.data, node=nodeTree2)
+        self.tree.add_node(parent='00', node=nodeTree5)
         
         with self.assertRaises(Exception):
             self.tree.add_node(parent=node00, node=nodeTree3)
@@ -168,7 +171,7 @@ class TreeCalculations(unittest.TestCase):
         populate_two_level_tree(self.tree)
         
         self.tree = None
-        tree2 = _BaseTree(identifier = tree_name, query = self.query, session = self.session)
+        tree2 = create_tree(identifier = tree_name, query = self.query, session = self.session)
 
         node00  = tree2.get_node('00')
         node11  = tree2.get_node('11')
@@ -195,7 +198,6 @@ class TreeCalculations(unittest.TestCase):
         self.tree.create_node(parent=nodes2[1], data=nodes2[3])
         self.tree.create_node(parent=node, data=nodes2[4])
     
-        # print(self.tree)
         query, exp_query = self.session.query(_Node, _Links)      \
             .join(_Links, _Links.child_id == _Node.id), 12
             
@@ -210,6 +212,37 @@ class TreeCalculations(unittest.TestCase):
             .join(_Links, _Links.child_id == _Node.id), (exp_query - st_len)
             
         self.assertEqual(query2.count(),exp_query2, 'Query before "remove_subtree()"')
+
+    def test_remove_subtree_transfer(self):
+        print(f"Testing '{inspect.currentframe().f_code.co_name}'")
+        
+        populate_two_level_tree(self.tree)
+        
+        nodes2 = node_map(2, 5)
+        node = self.tree.get_node('01').data
+
+        self.tree.create_node(parent=node, data=nodes2[0])
+        self.tree.create_node(parent=nodes2[0], data=nodes2[1])
+        self.tree.create_node(parent=nodes2[0], data=nodes2[2])
+        self.tree.create_node(parent=nodes2[1], data=nodes2[3])
+        self.tree.create_node(parent=node, data=nodes2[4])
+    
+        query, exp_query = self.session.query(_Node, _Links)      \
+            .join(_Links, _Links.child_id == _Node.id), 12
+            
+        self.assertEqual(query.count(),exp_query, 'Query before "remove_subtree()"')
+        
+        st = self.tree.remove_subtree(nid='01')
+        st_len = len(st)
+        self.assertEqual(st_len, 7, 'Subtree length')
+        st2 = st.transfer_tree()
+        st = None
+
+        query2 = self.session.query(_Node, _Links)      \
+            .join(_Links, _Links.child_id == _Node.id)
+            
+        self.assertEqual(query2.count(),query.count(), 'Query before and after "remove_subtree()" should be equal after transfer_tree')
+
 
 # if __name__ == '__main__':
 #     unittest.main()
